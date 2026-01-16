@@ -9,6 +9,8 @@ import FilterPanel from './components/tasks/fllterPanel';
 import TaskColumn from './components/tasks/taskColumn';
 import TaskModal from './components/tasks/taskModal';
 
+import { getAllTasks, createTask, deleteTask, getAllUsers, getTasksByUser, Task as APITask } from './services/api';
+
 interface User {
   email: string;
   name: string;
@@ -21,9 +23,13 @@ interface Task {
   status: string;
   priority: string;
   assignee: string;
+  assigneeId?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface Assignee {
+  id: number;
   email: string;
   name: string;
 }
@@ -42,36 +48,20 @@ interface Errors {
 }
 
 export default function TaskManagementApp() {
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-  // Only runs once on initial render
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('authToken');
-    const user = localStorage.getItem('user');
-    if (token && user) {
-      return JSON.parse(user);
-    }
-  }
-  return null;
-});
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   
-  const [tasks, setTasks] = useState<Task[]>([
-    { id: 1, title: 'Setup project', description: 'Initialize Next.js project', status: 'done', priority: 'high', assignee: 'john@example.com' },
-    { id: 2, title: 'Design UI', description: 'Create mockups', status: 'in-progress', priority: 'medium', assignee: 'sarah@example.com' },
-    { id: 3, title: 'API Integration', description: 'Connect backend APIs', status: 'todo', priority: 'high', assignee: 'john@example.com' },
-  ]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   
-  // TODO: Replace with API call to fetch users from backend
-  const [availableAssignees, setAvailableAssignees] = useState<Assignee[]>([
-    { email: 'john@example.com', name: 'John Doe' },
-    { email: 'sarah@example.com', name: 'Sarah Smith' },
-    { email: 'mike@example.com', name: 'Mike Johnson' },
-  ]);
+  const [availableAssignees, setAvailableAssignees] = useState<Assignee[]>([]);
   
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [filterPriority, setFilterPriority] = useState('all');
   const [filterAssignee, setFilterAssignee] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [token, setToken] = useState(''); 
   
   const [formData, setFormData] = useState<FormData>({
     title: '',
@@ -82,6 +72,71 @@ export default function TaskManagementApp() {
   });
   
   const [errors, setErrors] = useState<Errors>({});
+
+   useEffect(() => {
+    const t = localStorage.getItem('authToken') || '';
+    setToken(t);
+  }, []);
+
+   useEffect(() => {
+    if (!token) return;
+
+    const loadUsers = async () => {
+      try {
+        const users = await getAllUsers(token);
+        setAvailableAssignees(users);
+      } catch (err) {
+        console.error('Failed to load users', err);
+      }
+    };
+
+    loadUsers();
+  }, [token]);
+
+  // Hydration effect - check for stored user on mount
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    const user = localStorage.getItem('user');
+    if (token && user) {
+      setCurrentUser(JSON.parse(user));
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // Fetch tasks when user logs in
+  useEffect(() => {
+    if (currentUser) {
+      const fetchTasks = async () => {
+        const token = localStorage.getItem('authToken');
+        if (!token) return;
+
+        setIsLoadingTasks(true);
+        try {
+          const apiTasks = await getAllTasks(token);
+          // Transform API tasks to UI format
+          const transformedTasks = apiTasks.map(task => ({
+            id: task.id,
+            title: task.title,
+            description: task.description,
+            status: task.status,
+            priority: task.priority,
+            assignee: task.name,
+            assigneeId: task.assigneeId,
+          }));
+          setTasks(transformedTasks);
+        } catch (error) {
+          console.error('Failed to fetch tasks:', error);
+          setTasks([]);
+        } finally {
+          setIsLoadingTasks(false);
+        }
+      };
+
+      fetchTasks();
+    }
+  }, [currentUser]);
+
+  
   
   const statuses = [
     { id: 'todo', label: 'To Do', color: 'bg-gray-100 border-gray-300' },
@@ -110,21 +165,53 @@ export default function TaskManagementApp() {
     return Object.keys(newErrors).length === 0;
   };
   
- const handleSubmit = () => {
-  if (!validateForm()) return;
-  
-  // TODO: Add API call to create/update task
-  if (editingTask) {
-    setTasks(tasks.map(t => t.id === editingTask.id ? { ...formData, id: t.id } : t));
-  } else {
-    // Generate a unique ID based on current max ID + 1
-    const maxId = tasks.length > 0 ? Math.max(...tasks.map(t => t.id)) : 0;
-    const newTask = { ...formData, id: maxId + 1 };
-    setTasks([...tasks, newTask]);
-  }
-  
-  resetForm();
-};
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
+
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    try {
+      // Get the selected assignee ID from formData
+      const assigneeId = parseInt(formData.assignee);
+      if (isNaN(assigneeId)) {
+        setErrors({ assignee: 'Please select a valid assignee' });
+        return;
+      }
+      
+      const taskData = {
+        title: formData.title,
+        description: formData.description,
+        status: formData.status,
+        priority: formData.priority,
+        assigneeId: assigneeId,
+      };
+
+      if (editingTask) {
+        // TODO: Implement update task API call
+        setTasks(tasks.map(t => t.id === editingTask.id ? { ...formData, id: t.id } : t));
+      } else {
+        // Create new task via API
+        const newTask = await createTask(taskData, token);
+        const assigneeName = availableAssignees.find(a => a.id === assigneeId)?.name || 'Unknown';
+        const transformedTask: Task = {
+          id: newTask.id,
+          title: newTask.title,
+          description: newTask.description,
+          status: newTask.status,
+          priority: newTask.priority,
+          assignee: assigneeName,
+          assigneeId: newTask.assigneeId,
+        };
+        setTasks([...tasks, transformedTask]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Failed to submit task:', error);
+      // Show error to user if needed
+    }
+  };
   
   const resetForm = () => {
     setFormData({ title: '', description: '', status: 'todo', priority: 'medium', assignee: '' });
@@ -139,12 +226,83 @@ export default function TaskManagementApp() {
     setShowModal(true);
   };
   
-  const handleDelete = (id: number) => {
-    // TODO: Add API call to delete task
-    setTasks(tasks.filter(t => t.id !== id));
+  const handleDelete = async (id: number) => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    try {
+      await deleteTask(id, token);
+      setTasks(tasks.filter(t => t.id !== id));
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+    }
+  };
+
+  const handleLoadAssignees = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    try {
+      const users = await getAllUsers(token);
+      console.log('Fetched users:', users);
+      const assignees: Assignee[] = users.map(u => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+      }))
+      console.log('Mapped assignees:', assignees);
+      setAvailableAssignees(assignees);
+    } catch (error) {
+      console.error('Failed to fetch users:', error);
+    }
+  };
+
+  const handleFilterAssigneeChange = async (assigneeId: string) => {
+    setFilterAssignee(assigneeId);
+    
+    if (assigneeId === 'all') {
+      // Reset to all tasks
+      const token = localStorage.getItem('authToken');
+      if (!token) return;
+      try {
+        const apiTasks = await getAllTasks(token);
+        const transformedTasks = apiTasks.map(task => ({
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          status: task.status,
+          priority: task.priority,
+          assignee: task.name,
+          assigneeId: task.assigneeId,
+        }));
+        setTasks(transformedTasks);
+      } catch (error) {
+        console.error('Failed to fetch tasks:', error);
+      }
+    } else {
+      // Filter by selected user
+      const token = localStorage.getItem('authToken');
+      if (!token) return;
+      try {
+        const userId = parseInt(assigneeId);
+        const apiTasks = await getTasksByUser(userId, token);
+        const transformedTasks = apiTasks.map(task => ({
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          status: task.status,
+          priority: task.priority,
+          assignee: task.name,
+          assigneeId: task.assigneeId,
+        }));
+        setTasks(transformedTasks);
+      } catch (error) {
+        console.error('Failed to fetch user tasks:', error);
+      }
+    }
   };
   
-  const moveTask = (taskId: number, direction: 'left' | 'right') => {
+  const moveTask = async (taskId: number, direction: 'left' | 'right') => {
     const statusOrder = ['todo', 'in-progress', 'done'];
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
@@ -153,10 +311,18 @@ export default function TaskManagementApp() {
     const newIndex = direction === 'right' ? currentIndex + 1 : currentIndex - 1;
     
     if (newIndex >= 0 && newIndex < statusOrder.length) {
-      // TODO: Add API call to update task status
-      setTasks(tasks.map(t => 
-        t.id === taskId ? { ...t, status: statusOrder[newIndex] } : t
-      ));
+      const token = localStorage.getItem('authToken');
+      if (!token) return;
+
+      try {
+        // TODO: Add API call to update task status
+        // const updatedTask = await updateTask(taskId, { status: statusOrder[newIndex] }, token);
+        setTasks(tasks.map(t => 
+          t.id === taskId ? { ...t, status: statusOrder[newIndex] } : t
+        ));
+      } catch (error) {
+        console.error('Failed to move task:', error);
+      }
     }
   };
   
@@ -170,8 +336,11 @@ export default function TaskManagementApp() {
     const assignee = availableAssignees.find(a => a.email === email);
     return assignee ? assignee.name : email;
   };
-  
-  // Show auth page if not logged in
+    // Prevent hydration mismatch by not rendering until hydrated
+  if (!isHydrated) {
+    return null;
+  }
+    // Show auth page if not logged in
   if (!currentUser) {
     return <AuthPage onAuthSuccess={handleAuthSuccess} />;
   }
@@ -208,7 +377,8 @@ export default function TaskManagementApp() {
           priorities={priorities}
           availableAssignees={availableAssignees}
           onPriorityChange={setFilterPriority}
-          onAssigneeChange={setFilterAssignee}
+          onAssigneeChange={handleFilterAssigneeChange}
+          onLoadAssignees={handleLoadAssignees}
         />
         
         {/* Kanban Board */}

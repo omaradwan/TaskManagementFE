@@ -28,6 +28,7 @@ interface Status {
 }
 
 interface Assignee {
+  id: number;
   email: string;
   name: string;
 }
@@ -145,8 +146,8 @@ export default function TaskModal({
             >
               <option value="">Select an assignee</option>
               {availableAssignees.map(assignee => (
-                <option key={assignee.email} value={assignee.email}>
-                  {assignee.name} ({assignee.email})
+                <option key={assignee.id} value={assignee.id.toString()}>
+                  {assignee.name}
                 </option>
               ))}
             </select>

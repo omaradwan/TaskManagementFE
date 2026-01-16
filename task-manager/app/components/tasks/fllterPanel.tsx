@@ -1,10 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 
 interface Assignee {
   email: string;
   name: string;
+  id: number;
 }
 
 interface FilterPanelProps {
@@ -15,6 +16,7 @@ interface FilterPanelProps {
   availableAssignees: Assignee[];
   onPriorityChange: (priority: string) => void;
   onAssigneeChange: (assignee: string) => void;
+  onLoadAssignees: () => void;
 }
 
 export default function FilterPanel({ 
@@ -24,8 +26,19 @@ export default function FilterPanel({
   priorities, 
   availableAssignees, 
   onPriorityChange, 
-  onAssigneeChange 
+  onAssigneeChange,
+  onLoadAssignees
 }: FilterPanelProps) {
+  const [isLoadingAssignees, setIsLoadingAssignees] = useState(false);
+
+  const handleAssigneeDropdownOpen = async () => {
+    if (availableAssignees.length === 0) {
+      setIsLoadingAssignees(true);
+      await onLoadAssignees();
+      setIsLoadingAssignees(false);
+    }
+  };
+
   if (!show) return null;
 
   return (
@@ -45,19 +58,23 @@ export default function FilterPanel({
           </select>
         </div>
         
-        <div>
+        {/* <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">Assignee</label>
           <select
             value={filterAssignee}
             onChange={(e) => onAssigneeChange(e.target.value)}
+            onFocus={handleAssigneeDropdownOpen}
             className="border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={isLoadingAssignees}
           >
-            <option value="all">All Assignees</option>
+            <option value="all">
+              {isLoadingAssignees ? 'Loading users...' : 'All Assignees'}
+            </option>
             {availableAssignees.map(a => (
-              <option key={a.email} value={a.email}>{a.name}</option>
+              <option key={a.id} value={a.id.toString()}>{a.name}</option>
             ))}
           </select>
-        </div>
+        </div> */}
       </div>
     </div>
   );
